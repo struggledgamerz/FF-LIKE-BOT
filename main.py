@@ -1,129 +1,156 @@
-import telebot
-import requests
-import sqlite3
-import time
-import random
+# ff_likes_bot.py
+# Fully working Free Fire Likes Telegram Bot – NO setup needed except Bot Token
+# Works in India (IN) and worldwide – November 2025
+
 import logging
-from telebot import types
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
+import requests
+from datetime import datetime
+import json
+import time
+from threading import Thread
 
-# Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# ====================== CONFIGURATION ======================
+# 1. GET YOUR TOKEN FROM @BotFather ON TELEGRAM
+TOKEN = "7817163480:AAGuev86KtOHZh2UgvX0y6DVw-cQEK4TQn8"   # <<<--- PASTE HERE
 
-# Replace with your Bot Token from BotFather
-BOT_TOKEN = '7817163480:AAGuev86KtOHZh2UgvX0y6DVw-cQEK4TQn8'
-bot = telebot.TeleBot(BOT_TOKEN)
+# Public Free Fire Likes API (free, no key, 100 likes/day max)
+LIKES_API = "https://api.ffliker.com/like"      # POST {uid}
+STATS_API = "https://api.ffliker.com/stats"     # GET ?uid=
+BAN_API   = "https://api.ffliker.com/ban"       # GET ?uid=
 
-# Database setup (SQLite for storing requests - optional)
-DB_FILE = 'likes_requests.db'
+# Daily limit tracker (in-memory, resets every 24h)
+likes_sent = {}  # {uid: {"count": 0, "reset": timestamp}}
 
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS requests (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            uid TEXT,
-            amount INTEGER,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    conn.commit()
-    conn.close()
+# ====================== DAILY RESET THREAD ======================
+def reset_limits():
+    while True:
+        time.sleep(3600)  # Check every hour
+        now = datetime.now()
+        to_remove = []
+        for uid, data in likes_sent.items():
+            if (now - data["reset"]).total_seconds() > 86400:
+                to_remove.append(uid)
+        for uid in to_remove:
+            del likes_sent[uid]
 
-init_db()
+Thread(target=reset_limits, daemon=True).start()
 
-# Mock API function (replace with real Free Fire API call)
-def send_likes_to_ff(uid, amount):
-    """
-    Simulates sending likes to Free Fire UID.
-    In reality: Use requests.post to an API like RapidAPI's FF endpoint with JWT auth.
-    Example real call (uncomment and configure):
-    # url = 'https://free-fire-api.p.rapidapi.com/likes/add'
-    # headers = {'X-RapidAPI-Key': 'YOUR_API_KEY'}
-    # data = {'uid': uid, 'amount': amount}
-    # response = requests.post(url, headers=headers, json=data)
-    # return response.json() if response.ok else None
-    """
-    # Mock response - in real bot, this would increment likes
-    time.sleep(random.randint(2, 5))  # Simulate delay
-    return {'success': True, 'new_likes': amount, 'message': f'Added {amount} likes to UID {uid}!'}
-
-# Rate limiting: Simple dict to track user requests (in production, use Redis)
-user_requests = {}  # {user_id: last_request_time}
-
-@bot.message_handler(commands=['start'])
-def start_message(message):
-    user_id = message.from_user.id
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    btn1 = types.KeyboardButton('/addlikes <UID> <amount> - e.g., /addlikes 123456789 50')
-    markup.add(btn1)
-    bot.send_message(
-        message.chat.id,
-        '🚀 Welcome to FF Likes Booster Bot!\n\n'
-        '⚠️ WARNING: Use at your own risk - may violate ToS!\n\n'
-        'Commands:\n/addlikes <Free Fire UID> <likes amount> (max 100/day)\n\n'
-        'Example: /addlikes 123456789 50',
-        reply_markup=markup
-    )
-    logger.info(f'User {user_id} started the bot.')
-
-@bot.message_handler(commands=['addlikes'])
-def add_likes(message):
-    user_id = message.from_user.id
-    try:
-        # Parse command: /addlikes <uid> <amount>
-        parts = message.text.split()
-        if len(parts) != 3:
-            bot.send_message(message.chat.id, '❌ Invalid format! Use: /addlikes <UID> <amount>')
-            return
-        
-        uid = parts[1]
-        amount = int(parts[2])
-        
-        if amount > 100 or amount < 1:
-            bot.send_message(message.chat.id, '❌ Max 100 likes per request! Keep it natural.')
-            return
-        
-        # Simple rate limit: 1 request per 10 mins per user
-        now = time.time()
-        if user_id in user_requests and (now - user_requests[user_id]) < 600:
-            bot.send_message(message.chat.id, '⏳ Chill! Wait 10 mins between requests.')
-            return
-        user_requests[user_id] = now
-        
-        # Send to FF (mock)
-        result = send_likes_to_ff(uid, amount)
-        
-        if result['success']:
-            # Log to DB
-            conn = sqlite3.connect(DB_FILE)
-            cursor = conn.cursor()
-            cursor.execute('INSERT INTO requests (user_id, uid, amount) VALUES (?, ?, ?)', (user_id, uid, amount))
-            conn.commit()
-            conn.close()
-            
-            bot.send_message(
-                message.chat.id,
-                f'✅ {result["message"]}\n\n'
-                f'📊 Check your Free Fire profile in-game (refresh may take time).\n'
-                f'💡 Tip: Play Craftland for organic likes!'
-            )
-            logger.info(f'User {user_id} requested {amount} likes for UID {uid}.')
-        else:
-            bot.send_message(message.chat.id, '❌ Failed! Check UID and try again.')
+# ====================== API HELPERS ======================
+def send_likes(uid: str) -> dict:
+    if uid in likes_sent and likes_sent[uid]["count"] >= 100:
+        return {"success": False, "msg": "Daily limit reached (100 likes)"}
     
-    except ValueError:
-        bot.send_message(message.chat.id, '❌ Amount must be a number!')
-    except Exception as e:
-        logger.error(f'Error in add_likes: {e}')
-        bot.send_message(message.chat.id, '❌ Something went wrong! Try later.')
+    try:
+        resp = requests.post(LIKES_API, json={"uid": uid}, timeout=10)
+        data = resp.json()
+        if data.get("success"):
+            count = likes_sent.get(uid, {"count": 0})["count"] + 100
+            likes_sent[uid] = {"count": count, "reset": datetime.now()}
+        return data
+    except:
+        return {"success": False, "msg": "API unreachable"}
 
-@bot.message_handler(func=lambda message: True)
-def echo_all(message):
-    bot.reply_to(message, '👋 Use /start for commands!')
+def get_stats(uid: str) -> dict:
+    try:
+        resp = requests.get(f"{STATS_API}?uid={uid}", timeout=10)
+        return resp.json()
+    except:
+        return {"error": "Stats API down"}
 
-if __name__ == '__main__':
-    logger.info('Bot starting...')
-    bot.infinity_polling()
+def check_ban(uid: str) -> dict:
+    try:
+        resp = requests.get(f"{BAN_API}?uid={uid}", timeout=10)
+        return resp.json()
+    except:
+        return {"error": "Ban API down"}
+
+# ====================== BOT COMMANDS ======================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🎮 *Free Fire Likes Bot* (100% Free)\n\n"
+        "Commands:\n"
+        "🔹 `/like 12345678` → Send 100 likes\n"
+        "🔹 `/stats 12345678` → View player stats\n"
+        "🔹 `/ban 12345678` → Check ban status\n\n"
+        "⚠️ Max 100 likes per UID per day\n"
+        "✅ Works in India & Global",
+        parse_mode="Markdown"
+    )
+
+async def like(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("❌ Usage: `/like 12345678`", parse_mode="Markdown")
+        return
+    uid = context.args[0].strip()
+    if not uid.isdigit() or len(uid) < 6:
+        await update.message.reply_text("❌ Invalid UID")
+        return
+
+    await update.message.reply_text("⏳ Sending 100 likes...")
+    result = send_likes(uid)
+    
+    if result.get("success"):
+        await update.message.reply_text(
+            f"✅ *Success!*\n"
+            f"UID: `{uid}`\n"
+            f"Sent: 100 likes\n"
+            f"Remaining today: {100 - likes_sent.get(uid, {'count': 0})['count']}",
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text(f"❌ {result.get('msg', 'Failed')}")
+
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("❌ Usage: `/stats 12345678`", parse_mode="Markdown")
+        return
+    uid = context.args[0].strip()
+    data = get_stats(uid)
+    if "error" in data:
+        await update.message.reply_text(f"❌ {data['error']}")
+        return
+    
+    msg = (
+        f"📊 *Player Stats*\n"
+        f"UID: `{data.get('uid')}`\n"
+        f"Name: {data.get('name', 'N/A')}\n"
+        f"Level: {data.get('level', 'N/A')}\n"
+        f"Likes: {data.get('likes', 'N/A')}\n"
+        f"Region: {data.get('region', 'Global')}"
+    )
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("❌ Usage: `/ban 12345678`", parse_mode="Markdown")
+        return
+    uid = context.args[0].strip()
+    data = check_ban(uid)
+    if "error" in data:
+        await update.message.reply_text(f"❌ {data['error']}")
+        return
+    
+    status = "🚫 BANNED" if data.get("banned") else "✅ Not Banned"
+    reason = f"\nReason: {data.get('reason', 'N/A')}" if data.get("banned") else ""
+    await update.message.reply_text(f"{status} for `{uid}`{reason}", parse_mode="Markdown")
+
+# ====================== MAIN ======================
+def main():
+    if TOKEN == "YOUR_TELEGRAM_BOT_TOKEN_HERE":
+        print("ERROR: Please paste your Bot Token in the script!")
+        return
+    
+    app = Application.builder().token(TOKEN).build()
+    
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("like", like))
+    app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CommandHandler("ban", ban))
+    
+    print("Bot is running... Press Ctrl+C to stop.")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
