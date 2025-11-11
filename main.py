@@ -1,6 +1,5 @@
-# ff_likes_bot.py
-# Fully working Free Fire Likes Telegram Bot – NO setup needed except Bot Token
-# Works in India (IN) and worldwide – November 2025
+# main.py - Updated for Render: Polling Bot with Health Check
+# Fully working Free Fire Likes Telegram Bot – Deploy-ready for Render
 
 import logging
 from telegram import Update
@@ -10,10 +9,15 @@ from datetime import datetime
 import json
 import time
 from threading import Thread
+from flask import Flask
 
 # ====================== CONFIGURATION ======================
-# 1. GET YOUR TOKEN FROM @BotFather ON TELEGRAM
-TOKEN = "7817163480:AAGuev86KtOHZh2UgvX0y6DVw-cQEK4TQn8"   # <<<--- PASTE HERE
+# Telegram Bot Token (set as env var on Render)
+import os
+TOKEN = os.getenv("TOKEN")  # Render will inject this
+
+if not TOKEN:
+    raise ValueError("TOKEN environment variable not set!")
 
 # Public Free Fire Likes API (free, no key, 100 likes/day max)
 LIKES_API = "https://api.ffliker.com/like"      # POST {uid}
@@ -136,12 +140,8 @@ async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reason = f"\nReason: {data.get('reason', 'N/A')}" if data.get("banned") else ""
     await update.message.reply_text(f"{status} for `{uid}`{reason}", parse_mode="Markdown")
 
-# ====================== MAIN ======================
-def main():
-    if TOKEN == "YOUR_TELEGRAM_BOT_TOKEN_HERE":
-        print("ERROR: Please paste your Bot Token in the script!")
-        return
-    
+# ====================== MAIN BOT ======================
+def run_bot():
     app = Application.builder().token(TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
@@ -149,8 +149,19 @@ def main():
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("ban", ban))
     
-    print("Bot is running... Press Ctrl+C to stop.")
+    print("Bot is running...")
     app.run_polling()
 
+# ====================== FLASK FOR HEALTH CHECK ======================
+flask_app = Flask(__name__)
+
+@flask_app.route('/health', methods=['GET'])
+def health():
+    return "OK", 200  # Render pings this to keep service alive
+
 if __name__ == "__main__":
-    main()
+    # Start bot in background thread
+    bot_thread = Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+    # Run Flask on port 10000 (Render default)
+    flask_app.run(host='0.0.0.0', port=int(os.getenv("PORT", 10000)))
