@@ -10,13 +10,13 @@ from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, ContextTypes
 import nest_asyncio
 
-# Fix async in Flask
 nest_asyncio.apply()
 
-# ====================== CONFIG ======================
+# Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Config
 TOKEN = os.getenv("TOKEN")
 if not TOKEN:
     raise ValueError("Set TOKEN in Render Environment Variables!")
@@ -28,7 +28,7 @@ if not DOMAIN:
 WEBHOOK_URL = f"https://{DOMAIN}/webhook"
 BOT = Bot(TOKEN)
 
-# Load fake guests
+# Load guests
 GUESTS = []
 USED = set()
 
@@ -37,16 +37,17 @@ def load_guests():
     try:
         with open("guests/ff_guests.json", "r") as f:
             GUESTS = [json.loads(line.strip()) for line in f if line.strip()]
-        logger.info(f"Loaded {len(GUESTS)} fake guests")
+        logger.info(f"Loaded {len(GUESTS)} guests")
+    except FileNotFoundError:
+        logger.error("guests/ff_guests.json NOT FOUND! Upload to GitHub → guests/ff_guests.json")
     except Exception as e:
-        logger.error(f"Failed to load guests: {e}")
+        logger.error(f"Load error: {e}")
 
 load_guests()
 
 # Daily like tracker
-likes_sent = {}  # uid -> {"count": int, "reset": datetime}
+likes_sent = {}
 
-# ====================== DAILY RESET ======================
 def reset_daily():
     import time
     while True:
@@ -59,18 +60,19 @@ def reset_daily():
 
 Thread(target=reset_daily, daemon=True).start()
 
-# ====================== STATS API ======================
+# Free FF Stats API
 STATS_API = "https://free-ff-api-src-5plp.onrender.com/api/v1/playerstats"
 
-# ====================== COMMANDS ======================
+# Commands
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "FREE FIRE BOT LIVE!\n\n"
+        f"Guests: {len(GUESTS)}\n"
+        f"Used: {len(USED)}\n\n"
         "Commands:\n"
-        "/like 12345678 → 100 real likes\n"
-        "/stats 12345678 → Real player stats\n"
-        "/ban 12345678 → Ban check (free)\n\n"
-        f"Guests: {len(GUESTS)} | Used: {len(USED)}\n"
+        "/like 12345678 → 100 likes\n"
+        "/stats 12345678 → Real stats\n"
+        "/ban 12345678 → Ban check\n\n"
         "India & Global | 100 likes/day"
     )
 
@@ -83,13 +85,12 @@ async def like(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Invalid UID!")
         return
 
-    # Check daily limit
-    today = datetime.now().date()
-    if uid in likes_sent and likes_sent[uid]["count"] >= 100:
+    # Daily limit check
+    today = likes_sent.get(uid, {"count": 0})["count"]
+    if today >= 100:
         await update.message.reply_text("Daily limit reached! Try tomorrow.")
         return
 
-    # Get fresh guests
     available = [g for g in GUESTS if g["jwt"] not in USED][:100]
     if not available:
         await update.message.reply_text("No fresh guests! Regenerate.")
@@ -119,13 +120,13 @@ async def like(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if response.status_code == 200:
                 sent += 1
                 USED.add(guest["jwt"])
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.3)  # Rate limit
         except Exception as e:
             logger.error(f"Like failed: {e}")
 
     # Update daily count
     likes_sent[uid] = {
-        "count": (likes_sent.get(uid, {"count": 0})["count"] + sent),
+        "count": today + sent,
         "reset": datetime.now()
     }
 
@@ -164,20 +165,18 @@ async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text("Ban check not available in free mode.\nUse /stats for player info.")
 
-# ====================== FLASK APP ======================
-app = Flask(__name__)
+# Application
 application = Application.builder().token(TOKEN).build()
 
 # Add handlers
-for cmd, handler in [
-    ("start", start),
-    ("like", like),
-    ("stats", stats),
-    ("ban", ban)
-]:
-    application.add_handler(CommandHandler(cmd, handler))
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("like", like))
+application.add_handler(CommandHandler("stats", stats))
+application.add_handler(CommandHandler("ban", ban))
 
-# Webhook
+# Flask app
+app = Flask(__name__)
+
 @app.route('/webhook', methods=['POST'])
 async def webhook():
     update = Update.de_json(request.get_json(force=True), BOT)
@@ -194,15 +193,11 @@ def set_webhook():
 
 @app.route('/', methods=['GET'])
 def home():
-    return (
-        "FREE FIRE BOT LIVE!\n\n"
-        f"Guests: {len(GUESTS)} | Used: {len(USED)}\n"
-        f"Commands: /start | /like | /stats | /ban"
-    )
+    return "Bot is LIVE! Send /start in Telegram."
 
-# ====================== START ======================
+# Run
 if __name__ == "__main__":
-    # Set webhook
+    # Set webhook on startup
     Thread(target=lambda: BOT.set_webhook(url=WEBHOOK_URL), daemon=True).start()
-    port = int(os.getenv("PORT", 10000))
+    port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
