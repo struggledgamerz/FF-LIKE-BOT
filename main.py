@@ -117,9 +117,10 @@ application.add_handler(CommandHandler("like", like))
 app = Flask(__name__)
 
 @app.route('/webhook', methods=['POST'])
-async def webhook():
+def webhook():
+    # Flask does not support async views. Use asyncio.run to handle async Telegram methods.
     update = Update.de_json(request.get_json(force=True), BOT)
-    await application.process_update(update)
+    asyncio.run(application.process_update(update))
     return jsonify(success=True)
 
 @app.route('/set_webhook', methods=['GET'])
@@ -128,6 +129,7 @@ def set_webhook():
         BOT.set_webhook(url=WEBHOOK_URL)
         return f"Webhook set: {WEBHOOK_URL}"
     except Exception as e:
+        logger.error(f"Webhook set error: {e}")
         return f"Error: {e}"
 
 @app.route('/', methods=['GET'])
@@ -136,6 +138,8 @@ def home():
 
 # ====================== START ======================
 if __name__ == "__main__":
-    Thread(target=lambda: BOT.set_webhook(url=WEBHOOK_URL), daemon=True).start()
+    # Set webhook once at start (no need for separate thread here)
+    BOT.set_webhook(url=WEBHOOK_URL)
     port = int(os.getenv("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+    
