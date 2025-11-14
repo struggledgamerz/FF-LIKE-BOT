@@ -15,9 +15,9 @@ BOT_TOKEN = "7817163480:AAGuev86KtOHZh2UgvX0y6DVw-cQEK4TQn8"
 # ⚠️ YOUR CLOUDFLARE TUNNEL URL
 CLOUDFLARE_URL = "https://fails-earning-millions-informational.trycloudflare.com"
 
-# Railway domain
-DOMAIN = os.getenv("RAILWAY_PUBLIC_DOMAIN", "")
+DOMAIN = "ff-like-bot-px1w.onrender.com"   # YOUR RENDER URL
 WEBHOOK_URL = f"https://{DOMAIN}/webhook"
+
 
 # ------------------------------------
 # LOGGING
