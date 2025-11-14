@@ -81,7 +81,8 @@ async def like(update: Update, context: ContextTypes.DEFAULT_TYPE):
             payload = {"target_uid": int(uid), "count": 1}
 
             r = requests.post(
-                "https://ff-like.garena.com/api/like",
+                "https://fails-earning-millions-informational.trycloudflare.com/like
+                ",
                 json=payload,
                 headers=headers,
                 timeout=15
