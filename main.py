@@ -59,6 +59,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def like(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         return await update.message.reply_text("Usage: /like 12345678")
+
     uid = context.args[0].strip()
     if not uid.isdigit() or len(uid) < 8:
         return await update.message.reply_text("Invalid UID!")
@@ -77,38 +78,23 @@ async def like(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Content-Type": "application/json",
                 "User-Agent": "GarenaFreeFire/1.0"
             }
-            payload = {
-                "target_uid": int(uid),
-                "count": 1
-            }
-            # NEW WORKING URL (BYPASS RENDER BLOCK)
+            payload = {"target_uid": int(uid), "count": 1}
+
             r = requests.post(
                 "https://ff-like.garena.com/api/like",
                 json=payload,
                 headers=headers,
                 timeout=15
             )
-            if r.status_code in [200, 201]:
-                sent += 1
-                USED.add(g['jwt'])
-            await asyncio.sleep(0.4)
-        except:
-            pass
 
-    await update.message.reply_text(f"SENT {sent} REAL LIKES!\nCheck in-game in 5-10 mins")
-
-            # Check REAL like success
             try:
                 data = r.json()
-
-                # Garena like success conditions
                 if ("success" in data and data["success"] is True) or \
                    ("code" in data and data["code"] == 0):
                     sent += 1
-                    USED.add(g['jwt'])
-
-            except Exception as e:
-                print("JSON PARSE ERROR:", e)
+                    USED.add(g["jwt"])
+            except:
+                pass
 
             await asyncio.sleep(0.3)
 
@@ -125,7 +111,6 @@ application = Application.builder().token(TOKEN).build()
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("like", like))
 
-# Initialize bot
 async def init_bot():
     await application.initialize()
     await application.start()
