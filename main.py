@@ -17,16 +17,10 @@ logger = logging.getLogger(__name__)
 
 # ====================== CONFIG ======================
 TOKEN = os.getenv("TOKEN")
-if not TOKEN:
-    raise ValueError("TOKEN not set!")
-
 DOMAIN = os.getenv("RENDER_EXTERNAL_HOSTNAME")
-if not DOMAIN:
-    raise ValueError("RENDER_EXTERNAL_HOSTNAME not set!")
-
 WEBHOOK_URL = f"https://{DOMAIN}/webhook"
 
-# ====================== LOAD GUESTS ======================
+# ====================== GUESTS ======================
 GUESTS = []
 USED = set()
 
@@ -37,8 +31,7 @@ def load_guests():
             GUESTS = [json.loads(line.strip()) for line in f if line.strip()]
         logger.info(f"Loaded {len(GUESTS)} guests")
     except Exception as e:
-        logger.error(f"Guests load failed: {e}")
-        GUESTS = []
+        logger.error(f"Guests error: {e}")
 
 load_guests()
 
@@ -67,14 +60,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def like(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        return await update.message.reply_text("Usage: /like 12345678")
+        await update.message.reply_text("Usage: /like 12345678")
+        return
     uid = context.args[0].strip()
     if not uid.isdigit() or len(uid) < 8:
-        return await update.message.reply_text("Invalid UID!")
+        await update.message.reply_text("Invalid UID")
+        return
 
     available = [g for g in GUESTS if g["jwt"] not in USED][:100]
     if not available:
-        return await update.message.reply_text("No fresh guests!")
+        await update.message.reply_text("No fresh guests!")
+        return
 
     await update.message.reply_text(f"Sending {len(available)} likes to {uid}...")
 
@@ -92,35 +88,34 @@ async def like(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
     likes_sent[uid] = {"count": sent, "reset": datetime.now()}
-    await update.message.reply_text(f"SENT {sent} REAL LIKES!\nCheck in-game in 5 mins")
+    await update.message.reply_text(f"SENT {sent} REAL LIKES!\nCheck in-game!")
 
-# ====================== APP SETUP ======================
+# ====================== LAZY APP (NO UPDATER ERROR) ======================
 app = Flask(__name__)
-
-# Create application lazily to avoid Updater error
 application = None
 
-def create_app():
+def get_application():
     global application
-    builder = ApplicationBuilder().token(TOKEN)
-    builder.arbitrary_callback_data(True)  # FIX FOR PYTHON 3.13
-    application = builder.build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("like", like))
-
-create_app()
+    if application is None:
+        builder = ApplicationBuilder().token(TOKEN)
+        application = builder.build()
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("like", like))
+    return application
 
 # ====================== WEBHOOK ======================
 @app.route('/webhook', methods=['POST'])
 async def webhook():
-    update = Update.de_json(request.get_json(force=True), application.bot)
-    await application.process_update(update)
+    app = get_application()
+    update = Update.de_json(request.get_json(force=True), app.bot)
+    await app.process_update(update)
     return jsonify(success=True)
 
 @app.route('/set_webhook', methods=['GET'])
 def set_webhook():
+    app = get_application()
     try:
-        application.bot.set_webhook(url=WEBHOOK_URL)
+        app.bot.set_webhook(url=WEBHOOK_URL)
         return f"Webhook set: {WEBHOOK_URL}"
     except Exception as e:
         return f"Error: {e}"
@@ -131,6 +126,7 @@ def home():
 
 # ====================== START ======================
 if __name__ == "__main__":
-    Thread(target=lambda: application.bot.set_webhook(url=WEBHOOK_URL), daemon=True).start()
+    get_application()  # Initialize app
+    Thread(target=lambda: get_application().bot.set_webhook(url=WEBHOOK_URL), daemon=True).start()
     port = int(os.getenv("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
