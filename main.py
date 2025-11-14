@@ -118,9 +118,11 @@ def webhook():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(application.process_update(update))
-    loop.close()
+    # ❌ DO NOT CLOSE LOOP
+    # loop.close()
 
     return jsonify({"status": "ok"})
+    
         
 @app.route('/')
 def home():
