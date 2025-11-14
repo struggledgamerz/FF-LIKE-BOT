@@ -93,6 +93,8 @@ try:
     if ("success" in data and data["success"] == True) or ("code" in data and data["code"] == 0):
         sent += 1
         USED.add(g['jwt'])
+        except:
+            pass
     
             await asyncio.sleep(0.3)
         except:
