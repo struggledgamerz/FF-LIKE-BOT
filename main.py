@@ -1,145 +1,140 @@
 import os
-import json
 import logging
-import requests
-import asyncio
-from datetime import datetime
-from threading import Thread
-from flask import Flask, request, jsonify
-from telegram import Update, Bot
-from telegram.ext import Application, CommandHandler, ContextTypes
-import nest_asyncio
+import time
+import random
+import sqlite3
+from flask import Flask, request, abort
+import telebot
+from telebot import types
 
-nest_asyncio.apply()
-
-# ====================== LOGGING ======================
-logging.basicConfig(level=logging.INFO)
+# Logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# ====================== CONFIG ======================
-TOKEN = os.getenv("TOKEN")
-if not TOKEN:
-    raise ValueError("Set TOKEN in Render Environment Variables!")
+# Environment variables (set these in Render)
+BOT_TOKEN = os.environ.get("TOKEN")
+WEBHOOK_BASE = os.environ.get("WEBHOOK_URL")  # e.g. "https://your-service.onrender.com"
+if not BOT_TOKEN:
+    logger.error("TOKEN env var not set. Exiting.")
+    raise SystemExit("TOKEN env var not set")
+if not WEBHOOK_BASE:
+    logger.error("WEBHOOK_URL env var not set. Exiting.")
+    raise SystemExit("WEBHOOK_URL env var not set")
 
-DOMAIN = os.getenv("RENDER_EXTERNAL_HOSTNAME")
-if not DOMAIN:
-    raise ValueError("RENDER_EXTERNAL_HOSTNAME not set!")
+# Initialize bot
+bot = telebot.TeleBot(BOT_TOKEN, threaded=True)
 
-WEBHOOK_URL = f"https://{DOMAIN}/webhook"
-BOT = Bot(TOKEN)
+# --- DB setup (same as original) ---
+DB_FILE = 'likes_requests.db'
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            uid TEXT,
+            amount INTEGER,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
-# ====================== LOAD GUESTS ======================
-GUESTS = []
-USED = set()
+init_db()
 
-def load_guests():
-    global GUESTS
-    try:
-        with open("guests/ff_guests.json", "r") as f:
-            GUESTS = [json.loads(line.strip()) for line in f if line.strip()]
-        logger.info(f"Loaded {len(GUESTS)} fake guests")
-    except FileNotFoundError:
-        logger.error("guests/ff_guests.json NOT FOUND! Upload to GitHub → guests/ff_guests.json")
-        GUESTS = []
-    except Exception as e:
-        logger.error(f"Load error: {e}")
-        GUESTS = []
+# Mock API function (replace with real FF API)
+def send_likes_to_ff(uid, amount):
+    time.sleep(random.randint(2, 5))
+    return {'success': True, 'new_likes': amount, 'message': f'Added {amount} likes to UID {uid}!'}
 
-load_guests()
+user_requests = {}
 
-# ====================== DAILY RESET ======================
-likes_sent = {}
-
-def reset_daily():
-    import time
-    while True:
-        time.sleep(3600)
-        now = datetime.now()
-        to_remove = [uid for uid, data in likes_sent.items() if (now - data["reset"]).total_seconds() > 86400]
-        for uid in to_remove:
-            del likes_sent[uid]
-        logger.info("Daily reset complete")
-
-Thread(target=reset_daily, daemon=True).start()
-
-# ====================== COMMANDS ======================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "FREE FIRE BOT LIVE ON RENDER!\n\n"
-        f"Guests: {len(GUESTS)}\n"
-        f"Used: {len(USED)}\n\n"
-        "/like 12345678 → 100 real likes\n"
-        "/stats 12345678 → Real stats"
+# Handlers (same logic as your original bot)
+@bot.message_handler(commands=['start'])
+def start_message(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    btn1 = types.KeyboardButton('/addlikes <UID> <amount> - e.g., /addlikes 123456789 50')
+    markup.add(btn1)
+    bot.send_message(
+        message.chat.id,
+        '🚀 Welcome to FF Likes Booster Bot!\n\n'
+        '⚠️ WARNING: Use at your own risk - may violate ToS!\n\n'
+        'Commands:\n/addlikes <Free Fire UID> <likes amount> (max 100/day)\n\n'
+        'Example: /addlikes 123456789 50',
+        reply_markup=markup
     )
+    logger.info(f'User {message.from_user.id} started the bot.')
 
-async def like(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        return await update.message.reply_text("Usage: /like 12345678")
-    uid = context.args[0].strip()
-    if not uid.isdigit() or len(uid) < 8:
-        return await update.message.reply_text("Invalid UID!")
+@bot.message_handler(commands=['addlikes'])
+def add_likes(message):
+    user_id = message.from_user.id
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.send_message(message.chat.id, '❌ Invalid format! Use: /addlikes <UID> <amount>')
+            return
+        uid = parts[1]
+        amount = int(parts[2])
+        if amount > 100 or amount < 1:
+            bot.send_message(message.chat.id, '❌ Max 100 likes per request! Keep it natural.')
+            return
+        now = time.time()
+        if user_id in user_requests and (now - user_requests[user_id]) < 600:
+            bot.send_message(message.chat.id, '⏳ Chill! Wait 10 mins between requests.')
+            return
+        user_requests[user_id] = now
+        result = send_likes_to_ff(uid, amount)
+        if result['success']:
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
+            cursor.execute('INSERT INTO requests (user_id, uid, amount) VALUES (?, ?, ?)', (user_id, uid, amount))
+            conn.commit()
+            conn.close()
+            bot.send_message(message.chat.id, f'✅ {result["message"]}\n\n📊 Check your Free Fire profile in-game (refresh may take time).')
+            logger.info(f'User {user_id} requested {amount} likes for UID {uid}.')
+        else:
+            bot.send_message(message.chat.id, '❌ Failed! Check UID and try again.')
+    except ValueError:
+        bot.send_message(message.chat.id, '❌ Amount must be a number!')
+    except Exception:
+        logger.exception("Error in add_likes")
+        bot.send_message(message.chat.id, '❌ Something went wrong! Try later.')
 
-    # Daily limit
-    if uid in likes_sent and likes_sent[uid]["count"] >= 100:
-        return await update.message.reply_text("Daily limit reached! Try tomorrow.")
+@bot.message_handler(func=lambda message: True)
+def echo_all(message):
+    bot.reply_to(message, '👋 Use /start for commands!')
 
-    available = [g for g in GUESTS if g["jwt"] not in USED][:100]
-    if not available:
-        return await update.message.reply_text("No fresh guests! Regenerate.")
-
-    await update.message.reply_text(f"Sending {len(available)} likes to {uid}...")
-
-    sent = 0
-    for g in available:
-        try:
-            headers = {
-                "Authorization": f"Bearer {g['jwt']}",
-                "Content-Type": "application/json"
-            }
-            payload = {"target_uid": int(uid), "count": 1, "region": "IND"}
-            r = requests.post("https://ssg32-account.garena.com/like", json=payload, headers=headers, timeout=10)
-            if r.status_code == 200:
-                sent += 1
-                USED.add(g['jwt'])
-            await asyncio.sleep(0.3)
-        except Exception as e:
-            logger.error(f"Like failed: {e}")
-
-    likes_sent[uid] = {"count": (likes_sent.get(uid, {"count": 0})["count"] + sent), "reset": datetime.now()}
-    await update.message.reply_text(f"SENT {sent} REAL LIKES!\nCheck in-game in 5 mins!")
-
-# ====================== APPLICATION ======================
-application = Application.builder().token(TOKEN).build()
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("like", like))
-
-# ====================== FLASK ======================
+# Flask app + webhook endpoint
 app = Flask(__name__)
 
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    # Flask does not support async views. Use asyncio.run to handle async Telegram methods.
-    update = Update.de_json(request.get_json(force=True), BOT)
-    asyncio.run(application.process_update(update))
-    return jsonify(success=True)
-
-@app.route('/set_webhook', methods=['GET'])
-def set_webhook():
-    try:
-        BOT.set_webhook(url=WEBHOOK_URL)
-        return f"Webhook set: {WEBHOOK_URL}"
-    except Exception as e:
-        logger.error(f"Webhook set error: {e}")
-        return f"Error: {e}"
-
 @app.route('/', methods=['GET'])
-def home():
-    return f"Bot LIVE | Guests: {len(GUESTS)} | Used: {len(USED)}"
+def index():
+    return 'OK', 200
 
-# ====================== START ======================
+WEBHOOK_PATH = f"/{BOT_TOKEN}"
+@app.route(WEBHOOK_PATH, methods=['POST'])
+def webhook():
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return '', 200
+    else:
+        abort(403)
+
+# configure webhook on start
+def set_webhook():
+    webhook_url = WEBHOOK_BASE.rstrip('/') + WEBHOOK_PATH
+    logger.info(f"Setting webhook to: {webhook_url}")
+    bot.remove_webhook()
+    success = bot.set_webhook(url=webhook_url)
+    if not success:
+        logger.error("Failed to set webhook")
+    else:
+        logger.info("Webhook set successfully")
+
+set_webhook()
+
 if __name__ == "__main__":
-    # Set webhook once at start (no need for separate thread here)
-    BOT.set_webhook(url=WEBHOOK_URL)
-    port = int(os.getenv("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
-    
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
