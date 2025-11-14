@@ -43,7 +43,8 @@ def daily_reset():
     while True:
         time.sleep(3600)
         now = datetime.now()
-        to_remove = [uid for uid, data in likes_sent.items() if (now - data["reset"]).total_seconds() > 86400]
+        to_remove = [uid for uid, data in likes_sent.items()
+                     if (now - data["reset"]).total_seconds() > 86400]
         for uid in to_remove:
             del likes_sent[uid]
 
@@ -62,6 +63,7 @@ async def like(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Usage: /like 12345678")
         return
+
     uid = context.args[0].strip()
     if not uid.isdigit() or len(uid) < 8:
         await update.message.reply_text("Invalid UID")
@@ -79,7 +81,8 @@ async def like(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             headers = {"Authorization": f"Bearer {g['jwt']}"}
             payload = {"target_uid": int(uid), "count": 1, "region": "IND"}
-            r = requests.post("https://ssg32-account.garena.com/like", json=payload, headers=headers, timeout=10)
+            r = requests.post("https://ssg32-account.garena.com/like",
+                              json=payload, headers=headers, timeout=10)
             if r.status_code == 200:
                 sent += 1
                 USED.add(g['jwt'])
@@ -103,30 +106,27 @@ def get_application():
         application.add_handler(CommandHandler("like", like))
     return application
 
-# ====================== WEBHOOK ======================
+# ====================== WEBHOOK FIXED ======================
 @app.route('/webhook', methods=['POST'])
-async def webhook():
-    app = get_application()
-    update = Update.de_json(request.get_json(force=True), app.bot)
-    await app.process_update(update)
+def webhook():
+    app_ = get_application()
+    update = Update.de_json(request.get_json(force=True), app_.bot)
+    asyncio.run(app_.process_update(update))
     return jsonify(success=True)
 
 @app.route('/set_webhook', methods=['GET'])
 def set_webhook():
-    app = get_application()
-    try:
-        app.bot.set_webhook(url=WEBHOOK_URL)
-        return f"Webhook set: {WEBHOOK_URL}"
-    except Exception as e:
-        return f"Error: {e}"
+    app_ = get_application()
+    asyncio.run(app_.bot.set_webhook(WEBHOOK_URL))
+    return f"Webhook set to {WEBHOOK_URL}"
 
 @app.route('/', methods=['GET'])
 def home():
     return f"Bot LIVE | Guests: {len(GUESTS)}"
 
-# ====================== START ======================
+# ====================== START SERVER ======================
 if __name__ == "__main__":
-    get_application()  # Initialize app
-    Thread(target=lambda: get_application().bot.set_webhook(url=WEBHOOK_URL), daemon=True).start()
+    get_application()
     port = int(os.getenv("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+    
