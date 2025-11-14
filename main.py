@@ -17,8 +17,12 @@ logger = logging.getLogger(__name__)
 
 # ====================== CONFIG ======================
 TOKEN = os.getenv("TOKEN")
-DOMAIN = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+
+# RENDER_EXTERNAL_HOSTNAME sometimes fails, so we set it manually:
+DOMAIN = "ff-like-bot-px1w.onrender.com"
+
 WEBHOOK_URL = f"https://{DOMAIN}/webhook"
+
 
 # ====================== GUESTS ======================
 GUESTS = []
