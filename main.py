@@ -9,7 +9,7 @@ import requests
 # -----------------------------
 # CONFIG
 # -----------------------------
-BOT_TOKEN = "YOUR_BOT_TOKEN"
+BOT_TOKEN = "7817163480:AAGuev86KtOHZh2UgvX0y6DVw-cQEK4TQn8"
 CLOUDFLARE_URL = "https://fails-earning-millions-informational.trycloudflare.com"
 DOMAIN = "ff-like-bot-px1w.onrender.com"
 WEBHOOK_URL = f"https://{DOMAIN}/webhook"
