@@ -10,7 +10,7 @@ from telegram.ext import (
 )
 
 BOT_TOKEN = "7817163480:AAGuev86KtOHZh2UgvX0y6DVw-cQEK4TQn8"
-DOMAIN = "your-render-domain.onrender.com"
+DOMAIN = "https://ff-like-bot-px1w.onrender.com"
 WEBHOOK_URL = f"https://{DOMAIN}/webhook"
 
 logging.basicConfig(level=logging.INFO)
