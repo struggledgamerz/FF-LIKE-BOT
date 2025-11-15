@@ -1,40 +1,40 @@
 import logging
-import asyncio
 import os
+import asyncio
+import requests
 from flask import Flask, request, jsonify
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
-import requests
 
-# -----------------------------
+# -------------------------
 # CONFIG
-# -----------------------------
+# -------------------------
 BOT_TOKEN = "7817163480:AAGuev86KtOHZh2UgvX0y6DVw-cQEK4TQn8"
 CLOUDFLARE_URL = "https://fails-earning-millions-informational.trycloudflare.com"
+
 DOMAIN = "ff-like-bot-px1w.onrender.com"
 WEBHOOK_URL = f"https://{DOMAIN}/webhook"
 
-# Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Flask App
+# -------------------------
+# FLASK APP
+# -------------------------
 app = Flask(__name__)
 
-# Telegram Application
-application = Application.builder().token(BOT_TOKEN).build()
-
-# SINGLE EVENT LOOP (Very Important)
+# Global event loop
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 
+# Create Telegram Application (async)
+application = Application.builder().token(BOT_TOKEN).build()
 
-# -----------------------------
-# BOT COMMANDS
-# -----------------------------
+# -------------------------
+# TELEGRAM COMMANDS
+# -------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Bot is online!")
-
 
 async def like(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -42,61 +42,54 @@ async def like(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     ff_id = context.args[0]
-
     await update.message.reply_text("Processing...")
 
     try:
-        res = requests.get(f"{CLOUDFLARE_URL}/like?id={ff_id}")
-        data = res.json()
+        r = requests.get(f"{CLOUDFLARE_URL}/like?id={ff_id}", timeout=15)
+        data = r.json()
 
         if data.get("status") == "success":
-            await update.message.reply_text(f"Likes added: {data.get('likes', 0)}")
+            await update.message.reply_text(f"Likes Added: {data.get('likes')}")
         else:
             await update.message.reply_text("Failed to add likes")
-    except:
-        await update.message.reply_text("Server error!")
+    except Exception as e:
+        await update.message.reply_text("Server Error!")
 
-
+# Add handlers
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("like", like))
 
-
-# -----------------------------
-# INIT BOT (Webhook)
-# -----------------------------
+# -------------------------
+# INITIALIZE BOT (ONE TIME)
+# -------------------------
 async def init_bot():
     await application.initialize()
     await application.start()
     await application.bot.set_webhook(WEBHOOK_URL)
     print("Webhook set to:", WEBHOOK_URL)
 
+loop.create_task(init_bot())
 
-# Run async init in our single loop
-loop.run_until_complete(init_bot())
+# -------------------------
+# FLASK ROUTES
+# -------------------------
+@app.route("/", methods=["GET"])
+def home():
+    return "Bot Running!"
 
-
-# -----------------------------
-# WEBHOOK ROUTE
-# -----------------------------
 @app.route("/webhook", methods=["POST"])
 def webhook():
     update = Update.de_json(request.json, application.bot)
 
-    # Process update inside SAME event loop
+    # Process telegram update inside async loop safely
     loop.create_task(application.process_update(update))
 
     return jsonify({"ok": True})
 
-
-@app.route("/")
-def home():
-    return "Bot Running!"
-
-
-# -----------------------------
-# START SERVER
-# -----------------------------
+# -------------------------
+# RUN SERVER
+# -------------------------
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
-    
+        
